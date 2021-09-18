@@ -1,6 +1,6 @@
 
 ############## game.py ##############
-# TODO web exports only support a single file right now (I think)
+# TODO web exports only support a single src file right now (I think)... so everything is slapped into one mega file
 
 
 import katagames_sdk.engine as kataen
@@ -135,11 +135,11 @@ class Game:
 ############## raycaster.py ##############
 
 import math
+import random
 
 
 class Vector2:
-    # pygame.Vector2 doesn't seem to be supported yet
-    # So I'll make my own >:(
+    # TODO pygame.Vector2 doesn't seem to be supported yet. So I made my own >:(
 
     def __init__(self, x, y=0.0):
         if isinstance(x, Vector2):
@@ -193,6 +193,9 @@ class Vector2:
         res.rotate_ip(degrees)
         return res
 
+    def to_ints(self):
+        return Vector2(int(self.x), int(self.y))
+
     def length(self):
         return math.sqrt(self.x * self.x + self.y * self.y)
 
@@ -226,10 +229,10 @@ class RayEmitter:
 
 class RayCastPlayer(RayEmitter):
 
-    def __init__(self, xy, direction, fov, n_rays):
-        super().__init__(xy, direction, fov, n_rays)
-        self.move_speed = 50  # units per second
-        self.turn_speed = 120
+    def __init__(self, xy, direction, fov, n_rays, max_depth=100):
+        super().__init__(xy, direction, fov, n_rays, max_depth=max_depth)
+        self.move_speed = 75  # units per second
+        self.turn_speed = 160
 
     def move(self, forward, strafe, dt):
         if forward != 0:
@@ -245,17 +248,57 @@ class RayCastPlayer(RayEmitter):
 
 class RayCastWorld:
 
-    def __init__(self, grid_size, bg_color=(0, 0, 0)):
+    def __init__(self, grid_dims, cell_size, bg_color=(0, 0, 0)):
         self.grid = []
-        for _ in range(grid_size[1]):
-            self.grid.append([None] * grid_size[0])
+        for _ in range(grid_dims[0]):
+            self.grid.append([None] * grid_dims[1])
+        self.cell_size = cell_size
         self.bg_color = bg_color
 
-    def get_size(self):
+    def randomize(self, chance=0.2, n_colors=5):
+        colors = []
+        for _ in range(n_colors):
+            colors.append((random.randint(50, 255),
+                           random.randint(50, 255),
+                           random.randint(50, 255)))
+        for xy in self.all_cells():
+            if random.random() < chance:
+                color = random.choice(colors)
+                self.set_cell(xy, color)
+        return self
+
+    def set_cell(self, xy, color):
+        self.grid[xy[0]][xy[1]] = color
+
+    def get_cell(self, xy):
+        return self.grid[xy[0]][xy[1]]
+
+    def get_cell_coords_at(self, x, y):
+        return (int(x / self.cell_size), int(y / self.cell_size))
+
+    def get_cell_value_at(self, x, y):
+        coords = self.get_cell_coords_at(x, y)
+        return self.get_cell(coords)
+
+    def all_cells(self, in_rect=None):
+        dims = self.get_dims()
+        x_min = 0 if in_rect is None else max(0, int(in_rect[0] / self.cell_size))
+        y_min = 0 if in_rect is None else max(0, int(in_rect[1] / self.cell_size))
+        x_max = dims[0] if in_rect is None else min(dims[0], int((in_rect[0] + in_rect[2]) / self.cell_size) + 1)
+        y_max = dims[1] if in_rect is None else min(dims[1], int((in_rect[1] + in_rect[3]) / self.cell_size) + 1)
+        for x in range(x_min, x_max):
+            for y in range(y_min, y_max):
+                yield (x, y)
+
+    def get_dims(self):
         if len(self.grid) == 0:
             return (0, 0)
         else:
-            return (len(self.grid[0]), len(self.grid))
+            return (len(self.grid), len(self.grid[0]))
+
+    def get_size(self):
+        dims = self.get_dims()
+        return (dims[0] * self.cell_size, dims[1] * self.cell_size)
 
     def get_width(self):
         return self.get_size()[0]
@@ -264,11 +307,102 @@ class RayCastWorld:
         return self.get_size()[1]
 
 
+class RayState:
+    """The state of a single ray."""
+    def __init__(self, start, end, ray, color):
+        self.start = start
+        self.end = end
+        self.ray = ray
+        self.color = color
+
+    def dist(self):
+        if self.end is None:
+            return float('inf')
+        else:
+            return (self.end - self.start).length()
+
+
 class RayCastState:
 
     def __init__(self, player: RayCastPlayer, world: RayCastWorld):
         self.player = player
         self.world = world
+
+        self.ray_states = []
+
+    def update_ray_states(self):
+        self.ray_states.clear()
+        for ray in self.player.get_rays():
+            self.ray_states.append(self.cast_ray(self.player.xy, ray, self.player.max_depth))
+
+    def cast_ray(self, start_xy, ray, max_dist) -> RayState:
+        # yoinked from https://theshoemaker.de/2016/02/ray-casting-in-2d-grids/
+        dirSignX = ray[0] > 0 and 1 or -1
+        dirSignY = ray[1] > 0 and 1 or -1
+
+        tileOffsetX = (ray[0] > 0 and 1 or 0)
+        tileOffsetY = (ray[1] > 0 and 1 or 0)
+
+        curX, curY = start_xy[0], start_xy[1]
+        tileX, tileY = self.world.get_cell_coords_at(curX, curY)
+        t = 0
+
+        gridW, gridH = self.world.get_dims()
+        cell_size = self.world.cell_size
+
+        maxX = start_xy[0] + ray[0] * max_dist
+        maxY = start_xy[1] + ray[1] * max_dist
+
+        if ray.length() > 0:
+            while ((0 <= tileX < gridW and 0 <= tileY < gridH)
+                   and (curX <= maxX if ray[0] >= 0 else curX >= maxX)
+                   and (curY <= maxY if ray[1] >= 0 else curY >= maxY)):
+
+                color_at_cur_xy = self.world.get_cell((tileX, tileY))
+                if color_at_cur_xy is not None:
+                    return RayState(start_xy, Vector2(curX, curY), ray, color_at_cur_xy)
+
+                dtX = float('inf') if ray[0] == 0 else ((tileX + tileOffsetX) * cell_size - curX) / ray[0]
+                dtY = float('inf') if ray[1] == 0 else ((tileY + tileOffsetY) * cell_size - curY) / ray[1]
+
+                if dtX < dtY:
+                    t = t + dtX
+                    tileX = tileX + dirSignX
+                else:
+                    t = t + dtY
+                    tileY = tileY + dirSignY
+
+                curX = start_xy[0] + ray[0] * t
+                curY = start_xy[1] + ray[1] * t
+
+        return RayState(start_xy, None, ray, None)
+
+
+def lerp(v1, v2, a):
+    if isinstance(v1, float) or isinstance(v1, int):
+        return v1 + a * (v2 - v1)
+    else:
+        return tuple(lerp(v1[i], v2[i], a) for i in range(len(v1)))
+
+
+def bound(v, lower, upper):
+    if isinstance(v, float) or isinstance(v, int):
+        if v > upper:
+            return upper
+        elif v < lower:
+            return lower
+        else:
+            return v
+    else:
+        return tuple(bound(v[i], lower, upper) for i in range(len(v)))
+
+
+def round_tuple(v):
+    return tuple(round(v[i]) for i in range(len(v)))
+
+
+def lerp_color(c1, c2, a):
+    return bound(round_tuple(lerp(c1, c2, a)), 0, 255)
 
 
 class RayCastRenderer:
@@ -277,10 +411,30 @@ class RayCastRenderer:
         pass
 
     def render(self, screen, state: RayCastState):
-        rays = [r for r in state.player.get_rays()]
-        xy = state.player.xy
-        for r in rays:
-            pygame.draw.line(screen, (255, 255, 255), xy, xy + r * 100)
+        p_xy = state.player.xy
+
+        cs = state.world.cell_size
+        screen_size = screen.get_size()
+        cam_offs = Vector2(-p_xy[0] + screen_size[0] // 2,
+                           -p_xy[1] + screen_size[1] // 2)
+
+        bg_color = lerp_color(state.world.bg_color, (255, 255, 255), 0.05)
+
+        for r in state.ray_states:
+            color = r.color if r.color is not None else bg_color
+            if r.end is not None:
+                color = lerp_color(color, bg_color, r.dist() / state.player.max_depth)
+                pygame.draw.line(screen, color, r.start + cam_offs, r.end + cam_offs)
+            else:
+                pygame.draw.line(screen, color, r.start + cam_offs, r.start + r.ray * state.player.max_depth + cam_offs)
+
+        camera_rect = [p_xy[0] - screen_size[0] // 2, p_xy[1] - screen_size[1] // 2, screen_size[0], screen_size[1]]
+
+        for xy in state.world.all_cells(in_rect=camera_rect):
+            color = state.world.get_cell(xy)
+            if color is not None:
+                r = [xy[0] * cs + cam_offs[0], xy[1] * cs + cam_offs[1], cs, cs]
+                pygame.draw.rect(screen, color, r)
 
 
 class RayCasterGame(Game):
@@ -292,10 +446,13 @@ class RayCasterGame(Game):
         self.show_fps = True
 
     def _build_initial_state(self):
-        w = RayCastWorld(self.get_screen_size())
-        p = RayCastPlayer(Vector2(w.get_width() / 2, w.get_height() / 2),
-                          Vector2(0, 1),
-                          60, 20)
+        w = RayCastWorld(self.get_screen_size(), 16).randomize()
+        xy = Vector2(w.get_width() / 2, w.get_height() / 2)
+        direction = Vector2(0, 1)
+        p = RayCastPlayer(xy,
+                          direction,
+                          60,
+                          25, max_depth=200)
         return RayCastState(p, w)
 
     def get_mode(self):
@@ -308,6 +465,12 @@ class RayCasterGame(Game):
             dims = self.get_screen_size()
             cap = "Raycaster (DIMS={}, FPS={:.1f})".format(dims, self.get_fps(logical=False))
             pygame.display.set_caption(cap)
+
+        for e in events:
+            if e.type == pygame.KEYDOWN:
+                if e.key == pygame.K_r:
+                    print("Reseting!")
+                    self.state = self._build_initial_state()
 
         pressed = pygame.key.get_pressed()
 
@@ -331,6 +494,7 @@ class RayCasterGame(Game):
 
         self.state.player.turn(turn, dt)
         self.state.player.move(forward, strafe, dt)
+        self.state.update_ray_states()
 
     def render(self, screen):
         screen.fill((0, 0, 0))
