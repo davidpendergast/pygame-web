@@ -233,6 +233,9 @@ class RayCastPlayer(RayEmitter):
         super().__init__(xy, direction, fov, n_rays, max_depth=max_depth)
         self.move_speed = 75  # units per second
         self.turn_speed = 160
+        self.z = 0
+        self._z_vel = 0
+        self.grav = -15
 
     def move(self, forward, strafe, dt):
         if forward != 0:
@@ -244,6 +247,18 @@ class RayCastPlayer(RayEmitter):
 
     def turn(self, direction, dt):
         self.direction.rotate_ip(direction * self.turn_speed * dt)
+
+    def jump(self):
+        if self.z == 0 and self._z_vel == 0:
+            self._z_vel = 8
+
+    def update(self, dt):
+        if self.z > 0 or self._z_vel != 0:
+            self._z_vel += self.grav * dt
+            self.z += self._z_vel * dt
+        if self.z <= 0:
+            self.z = 0
+            self._z_vel = 0
 
 
 class RayCastWorld:
@@ -458,11 +473,13 @@ class RayCastRenderer3D(RayCastRenderer):
         sorted_ray_states = [r for r in state.ray_states if r.end is not None]
         sorted_ray_states.sort(key=lambda r: r.dist(), reverse=True)
 
+        cur_eye_level = self.eye_level + state.player.z
+
         for r in sorted_ray_states:
             i = r.idx
             color = lerp_color(r.color, bg_color, r.dist() / state.player.max_depth)
-            theta_upper = math.degrees(math.atan2(self.eye_level, r.dist()))
-            theta_lower = abs(math.degrees(math.atan2(self.wall_height - self.eye_level, r.dist())))
+            theta_upper = math.degrees(math.atan2(self.wall_height - cur_eye_level, r.dist()))
+            theta_lower = abs(math.degrees(math.atan2(cur_eye_level, r.dist())))
             rect_y1 = 0 if theta_upper >= half_fovy else screen_size[1] // 2 * (1 - theta_upper / half_fovy)
             rect_y2 = screen_size[1] if theta_lower >= half_fovy else screen_size[1] // 2 * (1 + theta_lower / half_fovy)
             rect_cx = screen_size[0] * ((i + 0.5) / n_rays)
@@ -489,7 +506,7 @@ class RayCasterGame(Game):
         return RayCastState(p, w)
 
     def get_mode(self):
-        return 'SUPER_RETRO'
+        return 'OLD_SCHOOL'
 
     def update(self, events, dt):
         if self.state is None:
@@ -498,6 +515,8 @@ class RayCasterGame(Game):
             dims = self.get_screen_size()
             cap = "Raycaster (DIMS={}, FPS={:.1f})".format(dims, self.get_fps(logical=False))
             pygame.display.set_caption(cap)
+
+        pressed = pygame.key.get_pressed()
 
         for e in events:
             if e.type == pygame.KEYDOWN:
@@ -511,8 +530,16 @@ class RayCasterGame(Game):
                     else:
                         print("Switching render mode to 3D. [pressed F]")
                         self.renderer = RayCastRenderer3D()
-
-        pressed = pygame.key.get_pressed()
+                elif e.key == pygame.K_SPACE:
+                    self.state.player.jump()
+            elif e.type == pygame.MOUSEBUTTONDOWN:
+                if e.button == 4 or e.button == 5:  # TODO these events aren't detected on web~
+                    cur_rays = self.state.player.n_rays
+                    ray_change = 1 if not pressed[pygame.K_LSHIFT] else 5
+                    # scroll up to increase, scroll down to decrease
+                    if e.button == 5:
+                        ray_change *= -1
+                    self.state.player.n_rays = bound(cur_rays + ray_change, 3, self.get_screen_size()[0])
 
         turn = 0
         if pressed[pygame.K_q] or pressed[pygame.K_LEFT]:
@@ -534,6 +561,7 @@ class RayCasterGame(Game):
 
         self.state.player.turn(turn, dt)
         self.state.player.move(forward, strafe, dt)
+        self.state.player.update(dt)
         self.state.update_ray_states()
 
     def render(self, screen):
@@ -542,7 +570,11 @@ class RayCasterGame(Game):
 
         if self.show_fps:
             fps_text = "FPS {:.1f}".format(self.get_fps(logical=False))
-            self.render_text(screen, fps_text, bg_color=(0, 0, 0), size=16)
+            rays_text = "RAYS: {}".format(self.state.player.n_rays)
+            r_to_reset = "[R] to Reset"
+            f_to_swap_modes = "[F] to change to " + ("2D" if isinstance(self.renderer, RayCastRenderer3D) else "3D")
+            full_text = "\n".join([fps_text, rays_text, r_to_reset, f_to_swap_modes])
+            self.render_text(screen, full_text, bg_color=(0, 0, 0), size=16)
 
 ############## raycaster.py ##############
 

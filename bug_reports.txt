@@ -1,0 +1,7 @@
+1. pygame.Vector2 and/or pygame.math.Vector2 can't be imported (I assume this is a known limitation).
+2. MOUSEBUTTONDOWN events with button == 4 and 5 (e.g. scrollwheel events) aren't received by the game in browser.
+3. Arrow key and space events cause the page to scroll in the browser (I think the htmlized version of the game needs to consume these?)
+4. pygame.draw.line and pygame.draw.rect look different in the browser (I think it's using anti-aliasing, whereas it doesn't do that in pygame.draw).
+5. Not really a bug, but is there a way to set the intended FPS for games in the browser? Or is it just set to 60 always?
+6. It seems that the main.py module needs to have a "def run_game():" method as its entry point for the web version of the game. I didn't see this documented anywhere.
+7. Performance in the browser is pretty significantly worse than with regular python, e.g. 7 FPS vs. 60 FPS (for this game anyways, which uses a lot of pygame.draw calls). Not sure if that's possible to fix.
