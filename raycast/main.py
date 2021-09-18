@@ -222,9 +222,9 @@ class RayEmitter:
         self.max_depth = max_depth
 
     def get_rays(self):
-        left_ray = self.direction.rotate(-self.fov / 2)
+        left_ray = self.direction.rotate(-self.fov[0] / 2)
         for i in range(self.n_rays):
-            yield left_ray.rotate((i + 0.5) * self.fov / self.n_rays)
+            yield left_ray.rotate((i + 0.5) * self.fov[0] / self.n_rays)
 
 
 class RayCastPlayer(RayEmitter):
@@ -309,7 +309,8 @@ class RayCastWorld:
 
 class RayState:
     """The state of a single ray."""
-    def __init__(self, start, end, ray, color):
+    def __init__(self, idx, start, end, ray, color):
+        self.idx = idx
         self.start = start
         self.end = end
         self.ray = ray
@@ -332,10 +333,12 @@ class RayCastState:
 
     def update_ray_states(self):
         self.ray_states.clear()
+        i = 0
         for ray in self.player.get_rays():
-            self.ray_states.append(self.cast_ray(self.player.xy, ray, self.player.max_depth))
+            self.ray_states.append(self.cast_ray(i, self.player.xy, ray, self.player.max_depth))
+            i += 1
 
-    def cast_ray(self, start_xy, ray, max_dist) -> RayState:
+    def cast_ray(self, idx, start_xy, ray, max_dist) -> RayState:
         # yoinked from https://theshoemaker.de/2016/02/ray-casting-in-2d-grids/
         dirSignX = ray[0] > 0 and 1 or -1
         dirSignY = ray[1] > 0 and 1 or -1
@@ -360,7 +363,7 @@ class RayCastState:
 
                 color_at_cur_xy = self.world.get_cell((tileX, tileY))
                 if color_at_cur_xy is not None:
-                    return RayState(start_xy, Vector2(curX, curY), ray, color_at_cur_xy)
+                    return RayState(idx, start_xy, Vector2(curX, curY), ray, color_at_cur_xy)
 
                 dtX = float('inf') if ray[0] == 0 else ((tileX + tileOffsetX) * cell_size - curX) / ray[0]
                 dtY = float('inf') if ray[1] == 0 else ((tileY + tileOffsetY) * cell_size - curY) / ray[1]
@@ -375,7 +378,7 @@ class RayCastState:
                 curX = start_xy[0] + ray[0] * t
                 curY = start_xy[1] + ray[1] * t
 
-        return RayState(start_xy, None, ray, None)
+        return RayState(idx, start_xy, None, ray, None)
 
 
 def lerp(v1, v2, a):
@@ -437,12 +440,42 @@ class RayCastRenderer:
                 pygame.draw.rect(screen, color, r)
 
 
+class RayCastRenderer3D(RayCastRenderer):
+
+    def __init__(self):
+        super().__init__()
+        self.wall_height = 5
+        self.eye_level = 2.7
+
+    def render(self, screen, state: RayCastState):
+        n_rays = len(state.ray_states)
+        bg_color = lerp_color(state.world.bg_color, (255, 255, 255), 0.05)
+
+        screen_size = screen.get_size()
+        rect_width = screen_size[0] / n_rays
+        half_fovy = state.player.fov[1] / 2
+
+        sorted_ray_states = [r for r in state.ray_states if r.end is not None]
+        sorted_ray_states.sort(key=lambda r: r.dist(), reverse=True)
+
+        for r in sorted_ray_states:
+            i = r.idx
+            color = lerp_color(r.color, bg_color, r.dist() / state.player.max_depth)
+            theta_upper = math.degrees(math.atan2(self.eye_level, r.dist()))
+            theta_lower = abs(math.degrees(math.atan2(self.wall_height - self.eye_level, r.dist())))
+            rect_y1 = 0 if theta_upper >= half_fovy else screen_size[1] // 2 * (1 - theta_upper / half_fovy)
+            rect_y2 = screen_size[1] if theta_lower >= half_fovy else screen_size[1] // 2 * (1 + theta_lower / half_fovy)
+            rect_cx = screen_size[0] * ((i + 0.5) / n_rays)
+            screen_rect = [int(rect_cx - rect_width // 2), int(rect_y1), int(rect_width + 1), int(rect_y2 - rect_y1 + 1)]
+            pygame.draw.rect(screen, color, screen_rect)
+
+
 class RayCasterGame(Game):
 
     def __init__(self):
         super().__init__()
         self.state = None
-        self.renderer = RayCastRenderer()
+        self.renderer = RayCastRenderer3D()
         self.show_fps = True
 
     def _build_initial_state(self):
@@ -451,8 +484,8 @@ class RayCasterGame(Game):
         direction = Vector2(0, 1)
         p = RayCastPlayer(xy,
                           direction,
-                          60,
-                          25, max_depth=200)
+                          (60, 45),
+                          50, max_depth=200)
         return RayCastState(p, w)
 
     def get_mode(self):
@@ -469,8 +502,15 @@ class RayCasterGame(Game):
         for e in events:
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_r:
-                    print("Reseting!")
+                    print("Reseting! [pressed R]")
                     self.state = self._build_initial_state()
+                elif e.key == pygame.K_f:
+                    if isinstance(self.renderer, RayCastRenderer3D):
+                        print("Switching render mode to 2D. [pressed F]")
+                        self.renderer = RayCastRenderer()
+                    else:
+                        print("Switching render mode to 3D. [pressed F]")
+                        self.renderer = RayCastRenderer3D()
 
         pressed = pygame.key.get_pressed()
 
