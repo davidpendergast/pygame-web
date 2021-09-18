@@ -22,6 +22,9 @@ class Game:
         self._fps_tracker_rendering = collections.deque()
         self._tick = 0
 
+        self._cached_info_text = None
+        self._info_font = None
+
     def start(self):
         """Starts the game loop. This method will not exit until the game has finished execution."""
         kataen.init(self._get_mode_internal())
@@ -56,6 +59,16 @@ class Game:
 
     def update(self, events, dt):
         raise NotImplementedError()
+
+    def render_text(self, screen, text, size=12, pos=(0, 0), color=(255, 255, 255), bg_color=None):
+        if self._info_font is None or self._info_font.get_height() != size:
+            self._info_font = pygame.font.Font(None, size)
+        lines = text.split("\n")
+        y = pos[1]
+        for l in lines:
+            surf = self._info_font.render(l, True, color, bg_color)
+            screen.blit(surf, (pos[0], y))
+            y += surf.get_height()
 
     def get_fps(self, logical=True) -> float:
         q = self._fps_tracker_logic if logical else self._fps_tracker_rendering
@@ -276,6 +289,7 @@ class RayCasterGame(Game):
         super().__init__()
         self.state = None
         self.renderer = RayCastRenderer()
+        self.show_fps = True
 
     def _build_initial_state(self):
         w = RayCastWorld(self.get_screen_size())
@@ -321,6 +335,10 @@ class RayCasterGame(Game):
     def render(self, screen):
         screen.fill((0, 0, 0))
         self.renderer.render(screen, self.state)
+
+        if self.show_fps:
+            fps_text = "FPS {:.1f}".format(self.get_fps(logical=False))
+            self.render_text(screen, fps_text, bg_color=(0, 0, 0), size=16)
 
 ############## raycaster.py ##############
 
