@@ -1,7 +1,60 @@
 1. pygame.Vector2 and/or pygame.math.Vector2 can't be imported (I assume this is a known limitation).
+
 2. MOUSEBUTTONDOWN events with button == 4 and 5 (e.g. scrollwheel events) aren't received by the game in browser.
+
 3. Arrow key and space events cause the page to scroll in the browser (I think the htmlized version of the game needs to consume these?)
+
 4. pygame.draw.line and pygame.draw.rect look different in the browser (I think it's using anti-aliasing, whereas it doesn't do that in pygame.draw).
+
 5. Not really a bug, but is there a way to set the intended FPS for games in the browser? Or is it just set to 60 always?
+
 6. It seems that the main.py module needs to have a "def run_game():" method as its entry point for the web version of the game. I didn't see this documented anywhere.
+
 7. Performance in the browser is pretty significantly worse than with regular python, e.g. 7 FPS vs. 60 FPS (for this game anyways, which uses a lot of pygame.draw calls). Not sure if that's possible to fix.
+
+8. Surface.subsurface doesn't seem to exist. Code:
+
+  full_sheet = pygame.image.load("assets/art.png").convert()
+  for i in range(4):
+    Art.ENEMIES.append(full_sheet.subsurface([i * 16, 0, 16, 32]))
+
+Traceback (most recent call last):
+  File http://127.0.0.1:8000/#__main__ line 2, in <module>
+    my_katagame.run_game()
+  File http://127.0.0.1:8000/main.py line 790, in run_game
+    g.start()
+
+  File http://127.0.0.1:8000/main.py line 36, in start
+    self.pre_update()
+
+  File http://127.0.0.1:8000/main.py line 592, in pre_update
+    Art.load_from_disk()
+
+  File http://127.0.0.1:8000/main.py line 147, in load_from_disk
+    Art.ENEMIES.append(full_sheet.subsurface([i * 16, 0, 16, 32]))
+
+AttributeError: subsurface
+
+9. Surface.get_at seems to return some sort of JS array in web mode that can't be sliced. (This prevents it from being passed into Surface.set_colorkey, since that method slices its input array). Code: 
+
+  full_sheet = pygame.image.load("assets/art.png").convert()
+  print("get_at =", full_sheet.get_at((0, 0)))
+  Art._color_key = full_sheet.get_at((0, 0))[:3]
+
+get_at =   <Javascript Uint8ClampedArray object: 22,22,22,255> 
+Traceback (most recent call last):
+  File http://127.0.0.1:8000/#__main__ line 2, in <module>
+    my_katagame.run_game()
+  File http://127.0.0.1:8000/main.py line 807, in run_game
+    g.start()
+
+  File http://127.0.0.1:8000/main.py line 36, in start
+    self.pre_update()
+
+  File http://127.0.0.1:8000/main.py line 610, in pre_update
+    Art.load_from_disk()
+
+  File http://127.0.0.1:8000/main.py line 163, in load_from_disk
+    Art._color_key = full_sheet.get_at((0, 0))[:3]
+
+KeyError

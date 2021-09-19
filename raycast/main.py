@@ -132,6 +132,36 @@ class Game:
 
 ############## game.py ##############
 
+############## art.py ##############
+
+class Art:
+    ENEMIES = []
+    PICKUPS = []
+
+    _color_key = None
+
+    @staticmethod
+    def subsurface(surf, rect):  # TODO Surface.subsurface not supported in web mode~
+        res = pygame.Surface((rect[2], rect[3]))
+        res.fill(Art._color_key)
+        res.blit(surf, (0, 0), rect)
+        surf.set_colorkey(Art._color_key)
+        return res
+
+    @staticmethod
+    def load_from_disk():
+        full_sheet = pygame.image.load("assets/art.png").convert()
+        # XXX Avoiding a web bug here where get_at returns a non-sliceable array
+        colorkey = tuple(full_sheet.get_at((0, 0))[i] for i in range(3))
+        Art._color_key = colorkey
+        full_sheet.set_colorkey(colorkey)
+        for i in range(4):
+            Art.ENEMIES.append(Art.subsurface(full_sheet, [i * 16, 0, 16, 32]))
+        for i in range(5):
+            Art.PICKUPS.append(Art.subsurface(full_sheet, [i * 16, 32, 16, 32]))
+
+############## art.py ##############
+
 ############## raycaster.py ##############
 
 import math
@@ -377,7 +407,6 @@ class RayCastState:
         self.entities.remove(entity)
 
     def kill_player(self, killed_by):
-        print("player killed by {}".format(killed_by.name))
         self.game_over = True
 
     def update_ray_states(self):
@@ -540,21 +569,23 @@ class RayCasterGame(Game):
         self.show_controls = True
 
     def _build_initial_state(self):
-        W, H = 10, 10 #self.get_screen_size()
+        W, H = 10, 10 # self.get_screen_size()
         CELL_SIZE = 16
         w = RayCastWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
         direction = Vector2(0, 1)
         p = RayCastPlayer(xy, direction, (60, 45), 50, max_depth=200)
 
-        ents = []
-        ents.append(Enemy("Skulker", None, Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE)))
-        ents.append(Enemy("Observer", None, Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE)))
-        ents.append(Enemy("Remorse", None, Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE)))
-        ents.append(Enemy("Conjurer", None, Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE)))
+        ents = [
+            Enemy("Skulker", Art.ENEMIES[0], Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE)),
+            Enemy("Observer", Art.ENEMIES[1], Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE)),
+            Enemy("Remorse", Art.ENEMIES[2], Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE)),
+            Enemy("Conjurer", Art.ENEMIES[3], Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE))
+        ]
         for i in range(4):
-            ents.append(Pickup("Pickup {}".format(i+1), None, Vector2(CELL_SIZE * (0.5 + random.randint(0, W - 1)),
-                                                                      CELL_SIZE * (0.5 + random.randint(0, H - 1)))))
+            pos = Vector2(CELL_SIZE * (0.5 + random.randint(0, W - 1)),
+                          CELL_SIZE * (0.5 + random.randint(0, H - 1)))
+            ents.append(Pickup("Pickup {}".format(i+1), Art.PICKUPS[i], pos))
 
         # clear cells adjacent to player and entities
         for e in ents + [p]:
@@ -567,6 +598,9 @@ class RayCasterGame(Game):
 
     def get_mode(self):
         return 'SUPER_RETRO'
+
+    def pre_update(self):
+        Art.load_from_disk()
 
     def update(self, events, dt):
         if self.state is None:
@@ -735,7 +769,6 @@ class Enemy(Entity):
         self.xy += self.vel * self.move_speed * dt
 
     def on_collide_with_player(self, state):
-        print("game over")
         state.kill_player(self)
         pass
 
