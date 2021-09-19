@@ -135,30 +135,23 @@ class Game:
 ############## art.py ##############
 
 class Art:
-    ENEMIES = []
-    PICKUPS = []
-
-    _color_key = None
+    ENEMIES = [None] * 4
+    PICKUPS = [None] * 5
 
     @staticmethod
-    def subsurface(surf, rect):  # TODO Surface.subsurface not supported in web mode~
+    def subsurface(surf, rect, colorkey=(0xFF, 0x00, 0xFF)):  # XXX Surface.subsurface not supported in web mode~
         res = pygame.Surface((rect[2], rect[3]))
-        res.fill(Art._color_key)
         res.blit(surf, (0, 0), rect)
-        surf.set_colorkey(Art._color_key)
+        res.set_colorkey(colorkey)
         return res
 
     @staticmethod
     def load_from_disk():
-        full_sheet = pygame.image.load("assets/art.png").convert()
-        # XXX Avoiding a web bug here where get_at returns a non-sliceable array
-        colorkey = tuple(full_sheet.get_at((0, 0))[i] for i in range(3))
-        Art._color_key = colorkey
-        full_sheet.set_colorkey(colorkey)
+        full_sheet = pygame.image.load("assets/art.png").convert_alpha()
         for i in range(4):
-            Art.ENEMIES.append(Art.subsurface(full_sheet, [i * 16, 0, 16, 32]))
+            Art.ENEMIES[i] = Art.subsurface(full_sheet, [i * 16, 0, 16, 32])
         for i in range(5):
-            Art.PICKUPS.append(Art.subsurface(full_sheet, [i * 16, 32, 16, 32]))
+            Art.PICKUPS[i] = Art.subsurface(full_sheet, [i * 16, 32, 16, 32])
 
 ############## art.py ##############
 
@@ -245,12 +238,17 @@ class Vector2:
             self.y *= mult
 
     def angle_to(self, other):
-        dot = abs(self.dot(other))
+        dot = self.dot(other)
         mags = self.length() * math.sqrt(other[0] * other[0] + other[1] * other[1])
         if mags > 0.001:
+            neg_dot = dot < 0
+            dot = abs(dot)
             det = dot / mags
             if det <= 0.999:
-                return math.acos(det)
+                if neg_dot:
+                    return 180 - math.degrees(math.acos(det))
+                else:
+                    return math.degrees(math.acos(det))
         return 0
 
     def distance_to(self, other):
@@ -534,26 +532,61 @@ class RayCastRenderer3D(RayCastRenderer):
     def render(self, screen, state: RayCastState):
         n_rays = len(state.ray_states)
         bg_color = lerp_color(state.world.bg_color, (255, 255, 255), 0.05)
+        p_xy = state.player.xy
+        p_dir = state.player.direction
 
         screen_size = screen.get_size()
-        rect_width = screen_size[0] / n_rays
         half_fovy = state.player.fov[1] / 2
+        half_fovx = state.player.fov[0] / 2
 
-        sorted_ray_states = [r for r in state.ray_states if r.end is not None]
-        sorted_ray_states.sort(key=lambda r: r.dist(), reverse=True)
+        things_to_render = []
+
+        for ent in state.entities:
+            direction_to_ent = ent.xy - p_xy
+            if 0 < direction_to_ent.length() <= state.player.max_depth:
+                angle_to_ent = p_dir.angle_to(direction_to_ent)
+                if angle_to_ent <= half_fovx:
+                    # it's onscreen
+                    things_to_render.append(ent)
+
+        things_to_render.extend([r for r in state.ray_states if r.end is not None])
+        sort_key = lambda r: r.dist() if isinstance(r, RayState) else r.xy.distance_to(p_xy)
+        things_to_render.sort(key=sort_key, reverse=True)
 
         cur_eye_level = self.eye_level + state.player.z
 
-        for r in sorted_ray_states:
-            i = r.idx
-            color = lerp_color(r.color, bg_color, r.dist() / state.player.max_depth)
-            theta_upper = math.degrees(math.atan2(self.wall_height - cur_eye_level, r.dist()))
-            theta_lower = abs(math.degrees(math.atan2(cur_eye_level, r.dist())))
-            rect_y1 = 0 if theta_upper >= half_fovy else screen_size[1] // 2 * (1 - theta_upper / half_fovy)
-            rect_y2 = screen_size[1] if theta_lower >= half_fovy else screen_size[1] // 2 * (1 + theta_lower / half_fovy)
-            rect_cx = screen_size[0] * ((i + 0.5) / n_rays)
-            screen_rect = [int(rect_cx - rect_width // 2), int(rect_y1), int(rect_width + 1), int(rect_y2 - rect_y1 + 1)]
-            pygame.draw.rect(screen, color, screen_rect)
+        for r in things_to_render:
+            if isinstance(r, RayState):
+                i = r.idx
+                color = lerp_color(r.color, bg_color, r.dist() / state.player.max_depth)
+                theta_upper = math.degrees(math.atan2(self.wall_height - cur_eye_level, r.dist()))
+                theta_lower = abs(math.degrees(math.atan2(cur_eye_level, r.dist())))
+                rect_y1 = 0 if theta_upper >= half_fovy else screen_size[1] // 2 * (1 - theta_upper / half_fovy)
+                rect_y2 = screen_size[1] if theta_lower >= half_fovy else screen_size[1] // 2 * (1 + theta_lower / half_fovy)
+                rect_x1 = int(screen_size[0] * i / n_rays)
+                rect_x2 = int(screen_size[0] * (i + 1) / n_rays)
+                screen_rect = [rect_x1, int(rect_y1), rect_x2 - rect_x1 + 1, int(rect_y2 - rect_y1 + 1)]
+                pygame.draw.rect(screen, color, screen_rect)
+            elif isinstance(r, Entity):
+                to_ent = r.xy - p_xy
+                angle_from_left = p_dir.rotate(-half_fovx).angle_to(to_ent)
+                theta_upper = math.degrees(math.atan2(r.height - cur_eye_level, to_ent.length()))
+                theta_lower = abs(math.degrees(math.atan2(cur_eye_level, to_ent.length())))
+                rect_y1 = 0 if theta_upper >= half_fovy else screen_size[1] // 2 * (1 - theta_upper / half_fovy)
+                rect_y2 = screen_size[1] if theta_lower >= half_fovy else screen_size[1] // 2 * (1 + theta_lower / half_fovy)
+                rect_height = rect_y2 - rect_y1 + 1
+                rect_width = rect_height / r.height * r.width
+                rect_cx = angle_from_left / (half_fovx * 2) * screen_size[0]
+                screen_rect = [int(rect_cx - rect_width / 2), int(rect_y1), int(rect_width), int(rect_height)]
+
+                # XXX pygame.transform.scale doesn't work in web mode~
+                if r.image is not None and not kataen.runs_in_web():
+                    dest_surf = pygame.Surface((screen_rect[2], screen_rect[3]))
+                    dest_surf.set_colorkey(r.image.get_colorkey())
+                    xformed_img = pygame.transform.scale(r.image, (screen_rect[2], screen_rect[3]), dest_surf)
+                    screen.blit(xformed_img, (screen_rect[0], screen_rect[1]))
+                else:
+                    pygame.draw.rect(screen, r.get_color_2d(), screen_rect, 2)
 
 
 def rect_contains(rect, pt):
@@ -569,7 +602,7 @@ class RayCasterGame(Game):
         self.show_controls = True
 
     def _build_initial_state(self):
-        W, H = 10, 10 # self.get_screen_size()
+        W, H = 60, 40 # self.get_screen_size()
         CELL_SIZE = 16
         w = RayCastWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
@@ -615,7 +648,7 @@ class RayCasterGame(Game):
         for e in events:
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_r:
-                    print("Reseting! [pressed R]")
+                    print("Resetting! [pressed R]")
                     self.state = self._build_initial_state()
                 elif e.key == pygame.K_f:
                     if isinstance(self.renderer, RayCastRenderer3D):
@@ -727,7 +760,7 @@ class Enemy(Entity):
         super().__init__(name, image, xy, 4, 8)
         self.vel = Vector2(0, 1)
         self.turn_speed = 90
-        self.move_speed = 20
+        self.move_speed = 15
 
         self.is_aggro = False
         self.passive_radius = 70

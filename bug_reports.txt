@@ -58,3 +58,8 @@ Traceback (most recent call last):
     Art._color_key = full_sheet.get_at((0, 0))[:3]
 
 KeyError
+
+10. pygame.SRCALPHA doesn't seem to exist.
+11. pygame.transform.scale doesn't seem to exist.
+
+
