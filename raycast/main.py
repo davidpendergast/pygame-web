@@ -60,14 +60,14 @@ class Game:
     def update(self, events, dt):
         raise NotImplementedError()
 
-    def render_text(self, screen, text, size=12, pos=(0, 0), color=(255, 255, 255), bg_color=None):
+    def render_text(self, screen, text, size=12, pos=(0, 0), xanchor=0, color=(255, 255, 255), bg_color=None):
         if self._info_font is None or self._info_font.get_height() != size:
             self._info_font = pygame.font.Font(None, size)
         lines = text.split("\n")
         y = pos[1]
         for l in lines:
             surf = self._info_font.render(l, True, color, bg_color)
-            screen.blit(surf, (pos[0], y))
+            screen.blit(surf, (int(pos[0] - xanchor * surf.get_width()), y))
             y += surf.get_height()
 
     def get_fps(self, logical=True) -> float:
@@ -323,7 +323,17 @@ class RayCastWorld:
             if random.random() < chance:
                 color = random.choice(colors)
                 self.set_cell(xy, color)
+        self.fill_border(colors[0])
         return self
+
+    def fill_border(self, color):
+        W, H = self.get_dims()
+        for i in range(W):
+            self.set_cell((i, 0), color)
+            self.set_cell((i, H - 1), color)
+        for i in range(H):
+            self.set_cell((0, i), color)
+            self.set_cell((W - 1, i), color)
 
     def set_cell(self, xy, color):
         if self.is_valid(xy):
@@ -393,19 +403,30 @@ class RayCastState:
     def __init__(self, player: RayCastPlayer, world: RayCastWorld, ents=()):
         self.player = player
         self.world = world
-        self.entities = list(ents)
+        self.entities = []
         self.game_over = False
+        self.total_stars = 0
 
         self.ray_states = []
+        for e in ents:
+            self.add_entity(e)
 
     def add_entity(self, entity):
         self.entities.append(entity)
+        if isinstance(entity, Pickup) and not entity.is_empty():
+            self.total_stars += 1
 
     def remove_entity(self, entity):
         self.entities.remove(entity)
 
+    def n_stars_remaining(self):
+        return len([e for e in self.entities if isinstance(e, Pickup) and not e.is_empty()])
+
     def kill_player(self, killed_by):
         self.game_over = True
+
+    def is_game_over(self):
+        return self.game_over or self.n_stars_remaining() == 0
 
     def update_ray_states(self):
         self.ray_states.clear()
@@ -426,15 +447,13 @@ class RayCastState:
         tileX, tileY = self.world.get_cell_coords_at(curX, curY)
         t = 0
 
-        gridW, gridH = self.world.get_dims()
         cell_size = self.world.cell_size
 
         maxX = start_xy[0] + ray[0] * max_dist
         maxY = start_xy[1] + ray[1] * max_dist
 
         if ray.length() > 0:
-            while ((0 <= tileX < gridW and 0 <= tileY < gridH)
-                   and (curX <= maxX if ray[0] >= 0 else curX >= maxX)
+            while ((curX <= maxX if ray[0] >= 0 else curX >= maxX)
                    and (curY <= maxY if ray[1] >= 0 else curY >= maxY)):
 
                 color_at_cur_xy = self.world.get_cell((tileX, tileY))
@@ -677,32 +696,33 @@ class RayCasterGame(Game):
                         ray_change *= -1
                     self.state.player.n_rays = bound(cur_rays + ray_change, 3, self.get_screen_size()[0])
 
-        turn = 0
-        if pressed[pygame.K_q] or pressed[pygame.K_LEFT]:
-            turn -= 1
-        if pressed[pygame.K_e] or pressed[pygame.K_RIGHT]:
-            turn += 1
+        if not self.state.is_game_over():
+            turn = 0
+            if pressed[pygame.K_q] or pressed[pygame.K_LEFT]:
+                turn -= 1
+            if pressed[pygame.K_e] or pressed[pygame.K_RIGHT]:
+                turn += 1
 
-        forward = 0
-        if pressed[pygame.K_w] or pressed[pygame.K_UP]:
-            forward += 1
-        if pressed[pygame.K_s] or pressed[pygame.K_DOWN]:
-            forward -= 1
+            forward = 0
+            if pressed[pygame.K_w] or pressed[pygame.K_UP]:
+                forward += 1
+            if pressed[pygame.K_s] or pressed[pygame.K_DOWN]:
+                forward -= 1
 
-        strafe = 0
-        if pressed[pygame.K_a]:
-            strafe -= 1
-        if pressed[pygame.K_d]:
-            strafe += 1
+            strafe = 0
+            if pressed[pygame.K_a]:
+                strafe -= 1
+            if pressed[pygame.K_d]:
+                strafe += 1
 
-        self.state.player.turn(turn, dt)
-        self.state.player.move(forward, strafe, dt)
-        self.state.player.update(dt)
+            self.state.player.turn(turn, dt)
+            self.state.player.move(forward, strafe, dt)
+            self.state.player.update(dt)
 
-        for ent in list(self.state.entities):
-            ent.update(self.state, dt)
-            if rect_contains(ent.get_rect(), self.state.player.xy):
-                ent.on_collide_with_player(self.state)
+            for ent in list(self.state.entities):
+                ent.update(self.state, dt)
+                if rect_contains(ent.get_rect(), self.state.player.xy):
+                    ent.on_collide_with_player(self.state)
 
         self.state.update_ray_states()
 
@@ -721,6 +741,20 @@ class RayCasterGame(Game):
             c_to_show_instructions = "[C] to show controls"
             full_text = "\n".join([fps_text, c_to_show_instructions])
         self.render_text(screen, full_text, bg_color=(0, 0, 0), size=16)
+
+        total_stars = self.state.total_stars
+        collected = total_stars - self.state.n_stars_remaining()
+        info_text = "Stars ({}/{})".format(collected, total_stars)
+        self.render_text(screen, info_text, pos=(screen.get_size()[0], 0), xanchor=1.0, bg_color=(0, 0, 0), size=16)
+
+        if self.state.is_game_over():
+            if self.state.n_stars_remaining() == 0:
+                text = "You win!\nPress [R] to restart"
+            else:
+                text = "You lose!\nPress [R] to restart"
+            self.render_text(screen, text, pos=(screen.get_size()[0] // 2, screen.get_size()[1] // 2),
+                             xanchor=0.5, bg_color=(0, 0, 0), size=16)
+
 
 ############## raycaster.py ##############
 
@@ -815,12 +849,26 @@ class Pickup(Entity):
         return (0, 255, 255)
 
     def on_collide_with_player(self, state):
-        print("colided with player")
         state.remove_entity(self)
+        state.add_entity(EmptyPickup(self.xy))
+
+    def is_empty(self):
+        return False
+
+
+class EmptyPickup(Pickup):
+
+    def __init__(self, xy):
+        super().__init__("Empty Pickup", Art.PICKUPS[-1], xy)
+
+    def get_color_2d(self):
+        return (0, 150, 255)
+
+    def on_collide_with_player(self, state):
         pass
 
-
-
+    def is_empty(self):
+        return True
 
 ############## entities.py ##############
 
