@@ -162,10 +162,10 @@ class Vector2:
         return (v for v in (self.x, self.y))
 
     def __add__(self, other: 'Vector2'):
-        return Vector2(self.x + other.x, self.y + other.y)
+        return Vector2(self.x + other[0], self.y + other[1])
 
     def __sub__(self, other: 'Vector2'):
-        return Vector2(self.x - other.x, self.y - other.y)
+        return Vector2(self.x - other[0], self.y - other[1])
 
     def __mul__(self, other: float):
         return Vector2(self.x * other, self.y * other)
@@ -174,10 +174,13 @@ class Vector2:
         return Vector2(-self.x, -self.y)
 
     def __eq__(self, other: 'Vector2'):
-        return self.x == other.x and self.y == other.y
+        return self.x == other[0] and self.y == other[1]
 
     def __hash__(self):
         return hash((self.x, self.y))
+
+    def dot(self, other):
+        return self.x * other[0] + self.y * other[1]
 
     def rotate_ip(self, degrees):
         theta = math.radians(degrees)
@@ -210,6 +213,18 @@ class Vector2:
             mult = length / cur_length
             self.x *= mult
             self.y *= mult
+
+    def angle_to(self, other):
+        dot = abs(self.dot(other))
+        mags = self.length() * math.sqrt(other[0] * other[0] + other[1] * other[1])
+        if mags > 0.001:
+            det = dot / mags
+            if det <= 0.999:
+                return math.acos(det)
+        return 0
+
+    def distance_to(self, other):
+        return (self - other).length()
 
 
 class RayEmitter:
@@ -283,10 +298,17 @@ class RayCastWorld:
         return self
 
     def set_cell(self, xy, color):
-        self.grid[xy[0]][xy[1]] = color
+        if self.is_valid(xy):
+            self.grid[xy[0]][xy[1]] = color
+
+    def is_valid(self, xy):
+        return 0 <= xy[0] < self.get_dims()[0] and 0 <= xy[1] < self.get_dims()[1]
 
     def get_cell(self, xy):
-        return self.grid[xy[0]][xy[1]]
+        if self.is_valid(xy):
+            return self.grid[xy[0]][xy[1]]
+        else:
+            return None
 
     def get_cell_coords_at(self, x, y):
         return (int(x / self.cell_size), int(y / self.cell_size))
@@ -340,11 +362,23 @@ class RayState:
 
 class RayCastState:
 
-    def __init__(self, player: RayCastPlayer, world: RayCastWorld):
+    def __init__(self, player: RayCastPlayer, world: RayCastWorld, ents=()):
         self.player = player
         self.world = world
+        self.entities = list(ents)
+        self.game_over = False
 
         self.ray_states = []
+
+    def add_entity(self, entity):
+        self.entities.append(entity)
+
+    def remove_entity(self, entity):
+        self.entities.remove(entity)
+
+    def kill_player(self, killed_by):
+        print("player killed by {}".format(killed_by.name))
+        self.game_over = True
 
     def update_ray_states(self):
         self.ray_states.clear()
@@ -454,6 +488,12 @@ class RayCastRenderer:
                 r = [xy[0] * cs + cam_offs[0], xy[1] * cs + cam_offs[1], cs, cs]
                 pygame.draw.rect(screen, color, r)
 
+        for ent in state.entities:
+            rect = ent.get_rect()
+            rect = [rect[0] + cam_offs[0], rect[1] + cam_offs[1], rect[2], rect[3]]
+            color = ent.get_color_2d()
+            pygame.draw.rect(screen, color, rect, 1)
+
 
 class RayCastRenderer3D(RayCastRenderer):
 
@@ -487,26 +527,46 @@ class RayCastRenderer3D(RayCastRenderer):
             pygame.draw.rect(screen, color, screen_rect)
 
 
+def rect_contains(rect, pt):
+    return rect[0] <= pt[0] < rect[0] + rect[2] and rect[1] <= pt[1] < rect[1] + rect[3]
+
+
 class RayCasterGame(Game):
 
     def __init__(self):
         super().__init__()
         self.state = None
         self.renderer = RayCastRenderer3D()
-        self.show_fps = True
+        self.show_controls = True
 
     def _build_initial_state(self):
-        w = RayCastWorld(self.get_screen_size(), 16).randomize()
+        W, H = 10, 10 #self.get_screen_size()
+        CELL_SIZE = 16
+        w = RayCastWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
         direction = Vector2(0, 1)
-        p = RayCastPlayer(xy,
-                          direction,
-                          (60, 45),
-                          50, max_depth=200)
-        return RayCastState(p, w)
+        p = RayCastPlayer(xy, direction, (60, 45), 50, max_depth=200)
+
+        ents = []
+        ents.append(Enemy("Skulker", None, Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE)))
+        ents.append(Enemy("Observer", None, Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE)))
+        ents.append(Enemy("Remorse", None, Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE)))
+        ents.append(Enemy("Conjurer", None, Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE)))
+        for i in range(4):
+            ents.append(Pickup("Pickup {}".format(i+1), None, Vector2(CELL_SIZE * (0.5 + random.randint(0, W - 1)),
+                                                                      CELL_SIZE * (0.5 + random.randint(0, H - 1)))))
+
+        # clear cells adjacent to player and entities
+        for e in ents + [p]:
+            cell = w.get_cell_coords_at(e.xy[0], e.xy[1])
+            for x in range(cell[0] - 1, cell[0] + 2):
+                for y in range(cell[1] - 1, cell[1] + 2):
+                    w.set_cell((x, y), None)
+
+        return RayCastState(p, w, ents=ents)
 
     def get_mode(self):
-        return 'OLD_SCHOOL'
+        return 'SUPER_RETRO'
 
     def update(self, events, dt):
         if self.state is None:
@@ -530,8 +590,17 @@ class RayCasterGame(Game):
                     else:
                         print("Switching render mode to 3D. [pressed F]")
                         self.renderer = RayCastRenderer3D()
+                elif e.key == pygame.K_c:
+                    self.show_controls = not self.show_controls
                 elif e.key == pygame.K_SPACE:
                     self.state.player.jump()
+                elif e.key == pygame.K_EQUALS or e.key == pygame.K_MINUS:
+                    cur_rays = self.state.player.n_rays
+                    ray_change = 5 if not pressed[pygame.K_LSHIFT] else 10
+                    if e.key == pygame.K_MINUS:
+                        ray_change *= -1
+                    self.state.player.n_rays = bound(cur_rays + ray_change, 5, self.get_screen_size()[0])
+
             elif e.type == pygame.MOUSEBUTTONDOWN:
                 if e.button == 4 or e.button == 5:  # TODO these events aren't detected on web~
                     cur_rays = self.state.player.n_rays
@@ -562,21 +631,132 @@ class RayCasterGame(Game):
         self.state.player.turn(turn, dt)
         self.state.player.move(forward, strafe, dt)
         self.state.player.update(dt)
+
+        for ent in list(self.state.entities):
+            ent.update(self.state, dt)
+            if rect_contains(ent.get_rect(), self.state.player.xy):
+                ent.on_collide_with_player(self.state)
+
         self.state.update_ray_states()
 
     def render(self, screen):
         screen.fill((0, 0, 0))
         self.renderer.render(screen, self.state)
 
-        if self.show_fps:
-            fps_text = "FPS {:.1f}".format(self.get_fps(logical=False))
-            rays_text = "RAYS: {}".format(self.state.player.n_rays)
+        fps_text = "FPS {:.1f}".format(self.get_fps(logical=False))
+        if self.show_controls:
+            rays_text = "RAYS: {} [+/-] to change".format(self.state.player.n_rays)
             r_to_reset = "[R] to Reset"
             f_to_swap_modes = "[F] to change to " + ("2D" if isinstance(self.renderer, RayCastRenderer3D) else "3D")
-            full_text = "\n".join([fps_text, rays_text, r_to_reset, f_to_swap_modes])
-            self.render_text(screen, full_text, bg_color=(0, 0, 0), size=16)
+            c_to_hide_instructions = "[C] to hide controls"
+            full_text = "\n".join([fps_text, rays_text, r_to_reset, f_to_swap_modes, c_to_hide_instructions])
+        else:
+            c_to_show_instructions = "[C] to show controls"
+            full_text = "\n".join([fps_text, c_to_show_instructions])
+        self.render_text(screen, full_text, bg_color=(0, 0, 0), size=16)
 
 ############## raycaster.py ##############
+
+############## entities.py ##############
+
+
+class Entity:
+
+    def __init__(self, name, image, xy, width, height):
+        self.name = name
+        self.image = image
+        self.xy = xy
+        self.width = width
+        self.height = height
+
+    def get_rect(self):
+        return [self.xy[0] - self.width // 2,
+                self.xy[1] - self.width // 2,
+                self.width, self.width]
+
+    def get_color_2d(self):
+        return (255, 255, 255)
+
+    def get_image(self):
+        return self.image
+
+    def update(self, state, dt):
+        pass
+
+    def on_collide_with_player(self, state):
+        pass
+
+
+class Enemy(Entity):
+
+    def __init__(self, name, image, xy):
+        super().__init__(name, image, xy, 4, 8)
+        self.vel = Vector2(0, 1)
+        self.turn_speed = 90
+        self.move_speed = 20
+
+        self.is_aggro = False
+        self.passive_radius = 70
+        self.aggro_radius = 120
+
+    def get_image(self):
+        return self.image
+
+    def get_color_2d(self):
+        return (255, 0, 0)
+
+    def update(self, state, dt):
+        player_pos = state.player.xy
+        if self.is_aggro:
+            if player_pos.distance_to(self.xy) >= self.aggro_radius:
+                self.is_aggro = False
+        else:
+            if player_pos.distance_to(self.xy) <= self.passive_radius:
+                self.is_aggro = True
+
+        if self.is_aggro:
+            target_vel = player_pos - self.xy
+            if target_vel.length() != 0:
+                target_vel.scale_to_length(1)
+                if self.vel.angle_to(target_vel) < self.turn_speed * dt:
+                    self.vel = target_vel
+                else:
+                    # turn towards player
+                    turn_left = self.vel.rotate(-self.turn_speed * dt)
+                    turn_right = self.vel.rotate(self.turn_speed * dt)
+                    if target_vel.angle_to(turn_left) < target_vel.angle_to(turn_right):
+                        self.vel = turn_left
+                    else:
+                        self.vel = turn_right
+        else:
+            # just turn a bit randomly
+            self.vel = self.vel.rotate(0.5 * (random.random() - 0.5) * self.turn_speed * dt)
+
+        self.xy += self.vel * self.move_speed * dt
+
+    def on_collide_with_player(self, state):
+        print("game over")
+        state.kill_player(self)
+        pass
+
+
+class Pickup(Entity):
+
+    def __init__(self, name, image, xy):
+        super().__init__(name, image, xy, 4, 8)
+
+    def get_color_2d(self):
+        return (0, 255, 255)
+
+    def on_collide_with_player(self, state):
+        print("colided with player")
+        state.remove_entity(self)
+        pass
+
+
+
+
+############## entities.py ##############
 
 ############## main.py ##############
 
