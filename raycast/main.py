@@ -202,6 +202,9 @@ class Vector2:
     def __hash__(self):
         return hash((self.x, self.y))
 
+    def __repr__(self):
+        return "Vector2({}, {})".format(self.x, self.y)
+
     def dot(self, other):
         return self.x * other[0] + self.y * other[1]
 
@@ -270,7 +273,7 @@ class RayEmitter:
             yield left_ray.rotate((i + 0.5) * self.fov[0] / self.n_rays)
 
 
-class RayCastPlayer(RayEmitter):
+class Player(RayEmitter):
 
     def __init__(self, xy, direction, fov, n_rays, max_depth=100):
         super().__init__(xy, direction, fov, n_rays, max_depth=max_depth)
@@ -280,13 +283,19 @@ class RayCastPlayer(RayEmitter):
         self._z_vel = 0
         self.grav = -15
 
-    def move(self, forward, strafe, dt):
+    def move(self, forward, strafe, dt, state: 'GameState' = None):
+        new_xy = Vector2(self.xy)
         if forward != 0:
-            self.xy = self.xy + self.direction * forward * self.move_speed * dt
+            new_xy += self.direction * forward * self.move_speed * dt
 
         if strafe != 0:
             right = self.direction.rotate(90)
-            self.xy = self.xy + right * strafe * self.move_speed * dt
+            new_xy += right * strafe * self.move_speed * dt
+
+        if state is not None:
+            new_xy = state.get_closest_unobstructed_pos(new_xy)
+
+        self.xy = new_xy
 
     def turn(self, direction, dt):
         self.direction.rotate_ip(direction * self.turn_speed * dt)
@@ -397,10 +406,13 @@ class RayState:
         else:
             return (self.end - self.start).length()
 
+    def __repr__(self):
+        return "RayState(start={}, end={}, color={})".format(self.start, self.end, self.color)
+
 
 class GameState:
 
-    def __init__(self, player: RayCastPlayer, world: GameWorld, ents=()):
+    def __init__(self, player: Player, world: GameWorld, ents=()):
         self.player = player
         self.world = world
         self.entities = []
@@ -436,7 +448,48 @@ class GameState:
             self.ray_states.append(self.cast_ray(i, self.player.xy, ray, self.player.max_depth))
             i += 1
 
-    def cast_ray(self, idx, start_xy, ray, max_dist) -> RayState:
+    def has_line_of_sight(self, start_xy, end_xy):
+        ray = (end_xy - start_xy).scale_to_length(1)
+        dist = start_xy.distance_to(end_xy)
+        return self.cast_ray(-1, start_xy, ray, dist).end is None
+
+    def get_closest_unobstructed_pos(self, xy, buffer_zone=4) -> Vector2:
+        cell_xy = self.world.get_cell_coords_at(xy[0], xy[1])
+        res_xy = xy
+        if self.world.get_cell(cell_xy) is not None:
+            # end_xy is obstructed, find next best spot
+            dirs = [Vector2(0, 1), Vector2(-1, 0), Vector2(0, -1), Vector2(1, 0),
+                    Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]
+            rays = [self.cast_ray(-1, xy, d, self.world.cell_size * 2.5, antiray=True, ignore_cells=[cell_xy]) for d in dirs]
+            rays.sort(key=lambda r: 1000 if r.end is None else r.dist())
+            if rays[0].end is not None:
+                new_pos = rays[0].end
+                pushout_dir = rays[0].ray
+                pushout_dir.scale_to_length(buffer_zone / 2)
+                res_xy = new_pos + pushout_dir
+            else:
+                return xy  # failed
+
+        if buffer_zone > 0:
+            ortho_dists = self.ortho_distances_to_walls(res_xy, max_dist=buffer_zone)
+            for d in ortho_dists:
+                if ortho_dists[d] <= buffer_zone:
+                    res_xy += -d * (buffer_zone - ortho_dists[d])  # push it out, away from the wall
+
+        return res_xy
+
+    def ortho_distances_to_walls(self, xy, max_dist=100):
+        dirs = {
+            Vector2(0, 1): float('inf'),
+            Vector2(-1, 0): float('inf'),
+            Vector2(1, 0): float('inf'),
+            Vector2(0, -1): float('inf')
+        }
+        for v in dirs:
+            dirs[v] = self.cast_ray(-1, xy, v, max_dist).dist()
+        return dirs
+
+    def cast_ray(self, idx, start_xy, ray, max_dist, antiray=False, ignore_cells=None) -> RayState:
         # yoinked from https://theshoemaker.de/2016/02/ray-casting-in-2d-grids/
         dirSignX = ray[0] > 0 and 1 or -1
         dirSignY = ray[1] > 0 and 1 or -1
@@ -457,9 +510,10 @@ class GameState:
             while ((curX <= maxX if ray[0] >= 0 else curX >= maxX)
                    and (curY <= maxY if ray[1] >= 0 else curY >= maxY)):
 
-                color_at_cur_xy = self.world.get_cell((tileX, tileY))
-                if color_at_cur_xy is not None:
-                    return RayState(idx, start_xy, Vector2(curX, curY), ray, color_at_cur_xy)
+                if ignore_cells is None or (tileX, tileY) not in ignore_cells:
+                    color_at_cur_xy = self.world.get_cell((tileX, tileY))
+                    if (color_at_cur_xy is not None) != antiray:
+                        return RayState(idx, start_xy, Vector2(curX, curY), ray, color_at_cur_xy)
 
                 dtX = float('inf') if ray[0] == 0 else ((tileX + tileOffsetX) * cell_size - curX) / ray[0]
                 dtY = float('inf') if ray[1] == 0 else ((tileY + tileOffsetY) * cell_size - curY) / ray[1]
@@ -627,7 +681,7 @@ class RayCasterGame(Game):
         w = GameWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
         direction = Vector2(0, 1)
-        p = RayCastPlayer(xy, direction, (60, 45), 50, max_depth=200)
+        p = Player(xy, direction, (60, 45), 50, max_depth=200)
 
         ents = [
             Enemy("Skulker", Art.ENEMIES[0], Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE)),
@@ -717,7 +771,7 @@ class RayCasterGame(Game):
                 strafe += 1
 
             self.state.player.turn(turn, dt)
-            self.state.player.move(forward, strafe, dt)
+            self.state.player.move(forward, strafe, dt, state=self.state)
             self.state.player.update(dt)
 
             for ent in list(self.state.entities):
