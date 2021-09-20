@@ -427,6 +427,8 @@ class GameState:
         for e in ents:
             self.add_entity(e)
 
+        self.ellapsed_time = 0
+
     def add_entity(self, entity):
         self.entities.append(entity)
         if isinstance(entity, Pickup) and not entity.is_empty():
@@ -683,21 +685,22 @@ class RayCasterGame(Game):
     def _build_initial_state(self):
         W, H = 64, 48
         CELL_SIZE = 16
+        N_STARS = 4
 
         w = GameWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
-        p = Player(xy, fov=(60, 45), n_rays=60, move_speed=35, turn_speed=160, sight=200)
+        p = Player(xy, fov=(60, 45), n_rays=60, move_speed=50, turn_speed=160, sight=200)
 
         ents = [
-            Enemy("Skulker", Art.ENEMIES[0], Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE), move_speed=20, aggro_cooldown=15),
-            Enemy("Observer", Art.ENEMIES[1], Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE), sight=200),
-            Enemy("Remorse", Art.ENEMIES[2], Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE), move_speed=30, sight=80, aggro_cooldown=10),
-            Enemy("Conjurer", Art.ENEMIES[3], Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE), move_speed=15, turn_speed=90, sight=150)
+            Enemy("Skulker", Art.ENEMIES[0], Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE), move_speed=25, aggro_cooldown=15),
+            Enemy("Observer", Art.ENEMIES[1], Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE), move_speed=30, sight=200),
+            Enemy("Remorse", Art.ENEMIES[2], Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE), move_speed=40, sight=90, aggro_cooldown=10),
+            Enemy("Conjurer", Art.ENEMIES[3], Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE), move_speed=20, turn_speed=90, sight=150)
         ]
-        for i in range(4):
+        for i in range(N_STARS):
             pos = Vector2(CELL_SIZE * (0.5 + random.randint(0, W - 1)),
                           CELL_SIZE * (0.5 + random.randint(0, H - 1)))
-            ents.append(Pickup("Pickup {}".format(i+1), Art.PICKUPS[i], pos))
+            ents.append(Pickup("Pickup {}".format(i+1), Art.PICKUPS[i % 4], pos))
 
         # clear cells adjacent to player and entities
         for e in ents + [p]:
@@ -739,8 +742,9 @@ class RayCasterGame(Game):
                 elif e.key == pygame.K_c:
                     self.show_controls = not self.show_controls
                 elif e.key == pygame.K_SPACE:
-                    self.state.player.jump()
-                elif e.key == pygame.K_EQUALS or e.key == pygame.K_MINUS:
+                    if not self.state.is_game_over():
+                        self.state.player.jump()
+                elif e.key == pygame.K_EQUALS or e.key == pygame.K_MINUS:  # TODO these events aren't detected on web~
                     cur_rays = self.state.player.n_rays
                     ray_change = 5 if not pressed[pygame.K_LSHIFT] else 10
                     if e.key == pygame.K_MINUS:
@@ -748,7 +752,7 @@ class RayCasterGame(Game):
                     self.state.player.n_rays = bound(cur_rays + ray_change, 5, self.get_screen_size()[0])
 
             elif e.type == pygame.MOUSEBUTTONDOWN:
-                if e.button == 4 or e.button == 5:  # TODO these events aren't detected on web~
+                if e.button == 4 or e.button == 5:  # TODO these events aren't detected on web either~
                     cur_rays = self.state.player.n_rays
                     ray_change = 1 if not pressed[pygame.K_LSHIFT] else 5
                     # scroll up to increase, scroll down to decrease
@@ -756,35 +760,38 @@ class RayCasterGame(Game):
                         ray_change *= -1
                     self.state.player.n_rays = bound(cur_rays + ray_change, 3, self.get_screen_size()[0])
 
-        if not self.state.is_game_over():
-            turn = 0
-            if pressed[pygame.K_q] or pressed[pygame.K_LEFT]:
-                turn -= 1
-            if pressed[pygame.K_e] or pressed[pygame.K_RIGHT]:
-                turn += 1
+        turn = 0
+        if pressed[pygame.K_q] or pressed[pygame.K_LEFT]:
+            turn -= 1
+        if pressed[pygame.K_e] or pressed[pygame.K_RIGHT]:
+            turn += 1
 
-            forward = 0
+        forward = 0
+        strafe = 0
+        if not self.state.is_game_over():
             if pressed[pygame.K_w] or pressed[pygame.K_UP]:
                 forward += 1
             if pressed[pygame.K_s] or pressed[pygame.K_DOWN]:
                 forward -= 1
 
-            strafe = 0
             if pressed[pygame.K_a]:
                 strafe -= 1
             if pressed[pygame.K_d]:
                 strafe += 1
 
-            self.state.player.turn(turn, dt)
-            self.state.player.move(forward, strafe, dt, state=self.state)
-            self.state.player.update(dt)
+        self.state.player.turn(turn, dt)
+        self.state.player.move(forward, strafe, dt, state=self.state)
+        self.state.player.update(dt)
 
-            for ent in list(self.state.entities):
-                ent.update(self.state, dt)
-                if self.state.player.xy.distance_to(ent.xy) <= ent.radius:
-                    ent.on_collide_with_player(self.state)
+        for ent in list(self.state.entities):
+            ent.update(self.state, dt)
+            if not self.state.is_game_over() and self.state.player.xy.distance_to(ent.xy) <= ent.radius:
+                ent.on_collide_with_player(self.state)
 
         self.state.update_ray_states()
+
+        if not self.state.is_game_over():
+            self.state.ellapsed_time += dt
 
     def render(self, screen):
         screen.fill((0, 0, 0))
@@ -793,10 +800,11 @@ class RayCasterGame(Game):
         fps_text = "FPS {:.1f}".format(self.get_fps(logical=False))
         if self.show_controls:
             rays_text = "RAYS: {} [+/-] to change".format(self.state.player.n_rays)
-            r_to_reset = "[R] to Reset"
+            movekeys = "[WASDQE] or [arrows] to move"
+            r_to_reset = "[R] to reset"
             f_to_swap_modes = "[F] to change to " + ("2D" if isinstance(self.renderer, RayCastRenderer3D) else "3D")
             c_to_hide_instructions = "[C] to hide controls"
-            full_text = "\n".join([fps_text, rays_text, r_to_reset, f_to_swap_modes, c_to_hide_instructions])
+            full_text = "\n".join([fps_text, movekeys, rays_text, r_to_reset, f_to_swap_modes, c_to_hide_instructions])
         else:
             c_to_show_instructions = "[C] to show controls"
             full_text = "\n".join([fps_text, c_to_show_instructions])
@@ -804,12 +812,14 @@ class RayCasterGame(Game):
 
         total_stars = self.state.total_stars
         collected = total_stars - self.state.n_stars_remaining()
-        info_text = "Stars ({}/{})".format(collected, total_stars)
+        info_text = "Collect all Stars ({}/{})".format(collected, total_stars)
         self.render_text(screen, info_text, pos=(screen.get_size()[0], 0), xanchor=1.0, bg_color=(0, 0, 0), size=16)
 
         if self.state.is_game_over():
             if self.state.is_win():
-                text = "You win!\nPress [R] to restart"
+                mins = int(self.state.ellapsed_time) // 60
+                secs = self.state.ellapsed_time % 60
+                text = "You win!\n{}:{:.1f}\nPress [R] to restart".format(mins, secs)
             else:
                 text = "You lose!\nPress [R] to restart"
             self.render_text(screen, text, pos=(screen.get_size()[0] // 2, screen.get_size()[1] // 2),
@@ -870,13 +880,14 @@ class Enemy(Entity):
 
     def update(self, state, dt):
         player_xy = state.player.xy
-        if self.xy.distance_to(player_xy) < self.sight_radius and state.has_line_of_sight(self.xy, player_xy):
+        if not state.is_game_over() and (self.xy.distance_to(player_xy) < self.sight_radius
+                                         and state.has_line_of_sight(self.xy, player_xy)):
             self.aggro_cooldown = self.max_aggro_cooldown
             if not self.is_aggro:
                 print("{} became aggressive!".format(self.name))
                 self.is_aggro = True
 
-        if self.is_aggro and self.aggro_cooldown < 0:
+        if self.is_aggro and (self.aggro_cooldown < 0 or state.is_game_over()):
             print("{} became passive!".format(self.name))
             self.is_aggro = False
 
@@ -889,7 +900,12 @@ class Enemy(Entity):
         ms = self.move_speed if self.is_aggro else 0.666 * self.move_speed
         new_pos = self.xy + self.vel * ms * dt
 
-        self.xy = state.get_closest_unobstructed_pos(new_pos)
+        unwalled_new_pos = state.get_closest_unobstructed_pos(new_pos)
+        if not self.is_aggro and unwalled_new_pos != new_pos:
+            # it bonked a wall, turn
+            self.vel = self.vel.rotate(360 * random.random())
+
+        self.xy = unwalled_new_pos
         self.aggro_cooldown -= dt
 
     def on_collide_with_player(self, state):
