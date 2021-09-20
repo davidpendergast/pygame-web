@@ -231,14 +231,18 @@ class Vector2:
     def length_squared(self):
         return self.x * self.x + self.y * self.y
 
-    def scale_to_length(self, length):
+    def scale_to_length(self, length, or_else_rand=True) -> 'Vector2':
         cur_length = self.length()
         if cur_length == 0 and length != 0:
-            raise ValueError("Cannot scale vector with length 0")
+            if or_else_rand:
+                res = Vector2(0, length)
+                res.rotate_ip(360 * random.random())
+                return res
+            else:
+                raise ValueError("Cannot scale vector with length 0")
         else:
             mult = length / cur_length
-            self.x *= mult
-            self.y *= mult
+            return self * mult
 
     def angle_to(self, other):
         dot = self.dot(other)
@@ -275,10 +279,10 @@ class RayEmitter:
 
 class Player(RayEmitter):
 
-    def __init__(self, xy, direction, fov, n_rays, max_depth=100):
-        super().__init__(xy, direction, fov, n_rays, max_depth=max_depth)
-        self.move_speed = 75  # units per second
-        self.turn_speed = 160
+    def __init__(self, xy, fov=(60, 45), n_rays=50, move_speed=40, turn_speed=160, sight=200):
+        super().__init__(xy, Vector2(0, 1).rotate(random.random() * 360), fov, n_rays, max_depth=sight)
+        self.move_speed = move_speed  # units per second
+        self.turn_speed = turn_speed
         self.z = 0
         self._z_vel = 0
         self.grav = -15
@@ -441,6 +445,9 @@ class GameState:
     def is_game_over(self):
         return self.game_over or self.n_stars_remaining() == 0
 
+    def is_win(self):
+        return self.n_stars_remaining() == 0
+
     def update_ray_states(self):
         self.ray_states.clear()
         i = 0
@@ -457,15 +464,13 @@ class GameState:
         cell_xy = self.world.get_cell_coords_at(xy[0], xy[1])
         res_xy = xy
         if self.world.get_cell(cell_xy) is not None:
-            # end_xy is obstructed, find next best spot
             dirs = [Vector2(0, 1), Vector2(-1, 0), Vector2(0, -1), Vector2(1, 0),
                     Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]
             rays = [self.cast_ray(-1, xy, d, self.world.cell_size * 2.5, antiray=True, ignore_cells=[cell_xy]) for d in dirs]
             rays.sort(key=lambda r: 1000 if r.end is None else r.dist())
             if rays[0].end is not None:
                 new_pos = rays[0].end
-                pushout_dir = rays[0].ray
-                pushout_dir.scale_to_length(buffer_zone / 2)
+                pushout_dir = rays[0].ray.scale_to_length(buffer_zone / 2)
                 res_xy = new_pos + pushout_dir
             else:
                 return xy  # failed
@@ -676,18 +681,18 @@ class RayCasterGame(Game):
         self.show_controls = True
 
     def _build_initial_state(self):
-        W, H = 60, 40 # self.get_screen_size()
+        W, H = 64, 48
         CELL_SIZE = 16
+
         w = GameWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
-        direction = Vector2(0, 1)
-        p = Player(xy, direction, (60, 45), 50, max_depth=200)
+        p = Player(xy, fov=(60, 45), n_rays=60, move_speed=35, turn_speed=160, sight=200)
 
         ents = [
-            Enemy("Skulker", Art.ENEMIES[0], Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE)),
-            Enemy("Observer", Art.ENEMIES[1], Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE)),
-            Enemy("Remorse", Art.ENEMIES[2], Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE)),
-            Enemy("Conjurer", Art.ENEMIES[3], Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE))
+            Enemy("Skulker", Art.ENEMIES[0], Vector2(W * 0.25 * CELL_SIZE, H * 0.25 * CELL_SIZE), move_speed=20, aggro_cooldown=15),
+            Enemy("Observer", Art.ENEMIES[1], Vector2(W * 0.75 * CELL_SIZE, H * 0.25 * CELL_SIZE), sight=200),
+            Enemy("Remorse", Art.ENEMIES[2], Vector2(W * 0.75 * CELL_SIZE, H * 0.75 * CELL_SIZE), move_speed=30, sight=80, aggro_cooldown=10),
+            Enemy("Conjurer", Art.ENEMIES[3], Vector2(W * 0.25 * CELL_SIZE, H * 0.75 * CELL_SIZE), move_speed=15, turn_speed=90, sight=150)
         ]
         for i in range(4):
             pos = Vector2(CELL_SIZE * (0.5 + random.randint(0, W - 1)),
@@ -776,7 +781,7 @@ class RayCasterGame(Game):
 
             for ent in list(self.state.entities):
                 ent.update(self.state, dt)
-                if rect_contains(ent.get_rect(), self.state.player.xy):
+                if self.state.player.xy.distance_to(ent.xy) <= ent.radius:
                     ent.on_collide_with_player(self.state)
 
         self.state.update_ray_states()
@@ -803,7 +808,7 @@ class RayCasterGame(Game):
         self.render_text(screen, info_text, pos=(screen.get_size()[0], 0), xanchor=1.0, bg_color=(0, 0, 0), size=16)
 
         if self.state.is_game_over():
-            if self.state.n_stars_remaining() == 0:
+            if self.state.is_win():
                 text = "You win!\nPress [R] to restart"
             else:
                 text = "You lose!\nPress [R] to restart"
@@ -818,12 +823,13 @@ class RayCasterGame(Game):
 
 class Entity:
 
-    def __init__(self, name, image, xy, width, height):
+    def __init__(self, name, image, xy, width, height, radius=10):
         self.name = name
         self.image = image
         self.xy = xy
         self.width = width
         self.height = height
+        self.radius = radius  # for collisions with player
 
     def get_rect(self):
         return [self.xy[0] - self.width // 2,
@@ -845,15 +851,16 @@ class Entity:
 
 class Enemy(Entity):
 
-    def __init__(self, name, image, xy):
-        super().__init__(name, image, xy, 4, 8)
-        self.vel = Vector2(0, 1)
-        self.turn_speed = 90
-        self.move_speed = 15
+    def __init__(self, name, image, xy, turn_speed=180, move_speed=25, aggro_cooldown=5, sight=120):
+        super().__init__(name, image, xy, 4, 8, 3)
+        self.vel = Vector2(0, 1).rotate(360 * random.random())
+        self.turn_speed = turn_speed
+        self.move_speed = move_speed
 
         self.is_aggro = False
-        self.passive_radius = 70
-        self.aggro_radius = 120
+        self.aggro_cooldown = 0
+        self.max_aggro_cooldown = aggro_cooldown  # seconds
+        self.sight_radius = sight
 
     def get_image(self):
         return self.image
@@ -862,33 +869,28 @@ class Enemy(Entity):
         return (255, 0, 0)
 
     def update(self, state, dt):
-        player_pos = state.player.xy
-        if self.is_aggro:
-            if player_pos.distance_to(self.xy) >= self.aggro_radius:
-                self.is_aggro = False
-        else:
-            if player_pos.distance_to(self.xy) <= self.passive_radius:
+        player_xy = state.player.xy
+        if self.xy.distance_to(player_xy) < self.sight_radius and state.has_line_of_sight(self.xy, player_xy):
+            self.aggro_cooldown = self.max_aggro_cooldown
+            if not self.is_aggro:
+                print("{} became aggressive!".format(self.name))
                 self.is_aggro = True
 
-        if self.is_aggro:
-            target_vel = player_pos - self.xy
-            if target_vel.length() != 0:
-                target_vel.scale_to_length(1)
-                if self.vel.angle_to(target_vel) < self.turn_speed * dt:
-                    self.vel = target_vel
-                else:
-                    # turn towards player
-                    turn_left = self.vel.rotate(-self.turn_speed * dt)
-                    turn_right = self.vel.rotate(self.turn_speed * dt)
-                    if target_vel.angle_to(turn_left) < target_vel.angle_to(turn_right):
-                        self.vel = turn_left
-                    else:
-                        self.vel = turn_right
-        else:
-            # just turn a bit randomly
-            self.vel = self.vel.rotate(0.5 * (random.random() - 0.5) * self.turn_speed * dt)
+        if self.is_aggro and self.aggro_cooldown < 0:
+            print("{} became passive!".format(self.name))
+            self.is_aggro = False
 
-        self.xy += self.vel * self.move_speed * dt
+        if self.is_aggro:
+            self.vel = (player_xy - self.xy).scale_to_length(1)
+        else:
+            # just turn randomly
+            self.vel = self.vel.rotate(2 * (random.random() - 0.5) * self.turn_speed * dt)
+
+        ms = self.move_speed if self.is_aggro else 0.666 * self.move_speed
+        new_pos = self.xy + self.vel * ms * dt
+
+        self.xy = state.get_closest_unobstructed_pos(new_pos)
+        self.aggro_cooldown -= dt
 
     def on_collide_with_player(self, state):
         state.kill_player(self)
@@ -898,7 +900,7 @@ class Enemy(Entity):
 class Pickup(Entity):
 
     def __init__(self, name, image, xy):
-        super().__init__(name, image, xy, 4, 8)
+        super().__init__(name, image, xy, 4, 8, 10)
 
     def get_color_2d(self):
         return (0, 255, 255)
