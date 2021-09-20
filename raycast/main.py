@@ -304,7 +304,7 @@ class RayCastPlayer(RayEmitter):
             self._z_vel = 0
 
 
-class RayCastWorld:
+class GameWorld:
 
     def __init__(self, grid_dims, cell_size, bg_color=(0, 0, 0)):
         self.grid = []
@@ -398,9 +398,9 @@ class RayState:
             return (self.end - self.start).length()
 
 
-class RayCastState:
+class GameState:
 
-    def __init__(self, player: RayCastPlayer, world: RayCastWorld, ents=()):
+    def __init__(self, player: RayCastPlayer, world: GameWorld, ents=()):
         self.player = player
         self.world = world
         self.entities = []
@@ -423,6 +423,7 @@ class RayCastState:
         return len([e for e in self.entities if isinstance(e, Pickup) and not e.is_empty()])
 
     def kill_player(self, killed_by):
+        print("Player was killed by", killed_by.name)
         self.game_over = True
 
     def is_game_over(self):
@@ -508,7 +509,7 @@ class RayCastRenderer:
     def __init__(self):
         pass
 
-    def render(self, screen, state: RayCastState):
+    def render(self, screen, state: GameState):
         p_xy = state.player.xy
 
         cs = state.world.cell_size
@@ -548,7 +549,7 @@ class RayCastRenderer3D(RayCastRenderer):
         self.wall_height = 5
         self.eye_level = 2.7
 
-    def render(self, screen, state: RayCastState):
+    def render(self, screen, state: GameState):
         n_rays = len(state.ray_states)
         bg_color = lerp_color(state.world.bg_color, (255, 255, 255), 0.05)
         p_xy = state.player.xy
@@ -623,7 +624,7 @@ class RayCasterGame(Game):
     def _build_initial_state(self):
         W, H = 60, 40 # self.get_screen_size()
         CELL_SIZE = 16
-        w = RayCastWorld((W, H), CELL_SIZE).randomize()
+        w = GameWorld((W, H), CELL_SIZE).randomize()
         xy = Vector2(w.get_width() / 2, w.get_height() / 2)
         direction = Vector2(0, 1)
         p = RayCastPlayer(xy, direction, (60, 45), 50, max_depth=200)
@@ -646,7 +647,7 @@ class RayCasterGame(Game):
                 for y in range(cell[1] - 1, cell[1] + 2):
                     w.set_cell((x, y), None)
 
-        return RayCastState(p, w, ents=ents)
+        return GameState(p, w, ents=ents)
 
     def get_mode(self):
         return 'SUPER_RETRO'
