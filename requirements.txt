@@ -1,0 +1,2 @@
+# the katagames engine is used
+katasdk==0.0.6
