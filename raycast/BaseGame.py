@@ -23,8 +23,7 @@ class BaseGame(metaclass=ABCMeta):
         else:
             self._fps_n_frames = 0
 
-        self._fps_tracker_logic = collections.deque()
-        self._fps_tracker_rendering = collections.deque()
+        self._fps_tracker = collections.deque()
         self._tick = 0
 
         self._cached_info_text = None
@@ -82,11 +81,11 @@ class BaseGame(metaclass=ABCMeta):
     """
     utils
     """
-    def get_fps(self, logical=True) -> float:
-        q = self._fps_tracker_logic if logical else self._fps_tracker_rendering
-        if len(q) <= 1:
+    def get_fps(self) -> float:
+        if len(self._fps_tracker) <= 1:
             return 0
         else:
+            q = self._fps_tracker
             total_time_secs = q[-1] - q[0]
             n_frames = len(q)
             if total_time_secs <= 0:
@@ -129,17 +128,13 @@ class BaseGame(metaclass=ABCMeta):
         else:
             raise ValueError("Unrecognized mode: {}".format(mode_str))
 
-    def _render_internal(self, screen, tnow):
-        if self._fps_n_frames > 0:
-            self._fps_tracker_rendering.append(tnow)
-            if len(self._fps_tracker_rendering) > self._fps_n_frames:
-                self._fps_tracker_rendering.popleft()
-        self.render(screen)
-
     def _update_internal(self, events, tnow, dt):
-        if self._fps_n_frames > 0:
-            self._fps_tracker_logic.append(tnow)
-            if len(self._fps_tracker_logic) > self._fps_n_frames:
-                self._fps_tracker_logic.popleft()
         self.update(events, dt)
         self._tick += 1
+
+    def _render_internal(self, screen, tnow):
+        if self._fps_n_frames > 0:
+            self._fps_tracker.append(tnow)
+            if len(self._fps_tracker) > self._fps_n_frames:
+                self._fps_tracker.popleft()
+        self.render(screen)

@@ -495,10 +495,6 @@ class RayCasterGame(Game):
     def update(self, events, dt):
         if self.state is None:
             self.state = self._build_initial_state()
-        if self.get_tick() % 20 == 0:
-            dims = self.get_screen_size()
-            cap = "Raycaster (DIMS={}, FPS={:.1f})".format(dims, self.get_fps(logical=False))
-            pygame.display.set_caption(cap)
 
         pressed = pygame.key.get_pressed()
 
@@ -572,7 +568,7 @@ class RayCasterGame(Game):
         screen.fill((0, 0, 0))
         self.renderer.render(screen, self.state)
 
-        fps_text = "FPS {:.1f}".format(self.get_fps(logical=False))
+        fps_text = "FPS {:.1f}".format(self.get_fps())
         if self.show_controls:
             rays_text = "RAYS: {} [+/-] to change".format(self.state.player.n_rays)
             movekeys = "[WASDQE] or [arrows] to move"
