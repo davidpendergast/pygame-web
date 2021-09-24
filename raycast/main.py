@@ -455,6 +455,18 @@ class RayCasterGame(BaseGame):
         self.renderer = RayCastRenderer3D()
         self.show_controls = True
 
+        self._info_font = None
+
+    def render_text(self, screen, text, size=12, pos=(0, 0), xanchor=0, color=(255, 255, 255), bg_color=None):
+        if self._info_font is None or self._info_font.get_height() != size:
+            self._info_font = pygame.font.Font(None, size)
+        lines = text.split("\n")
+        y = pos[1]
+        for a_line in lines:
+            surf = self._info_font.render(a_line, True, color, bg_color)
+            screen.blit(surf, (int(pos[0] - xanchor * surf.get_width()), y))
+            y += surf.get_height()
+
     def _build_initial_state(self):
         W, H = 64, 48
         CELL_SIZE = 16

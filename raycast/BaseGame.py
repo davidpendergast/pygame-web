@@ -26,7 +26,6 @@ class BaseGame(metaclass=ABCMeta):
             self.__track_fps = False
 
         self.tick = 0
-        self._info_font = None
 
     @property
     def is_tracking_fps(self):
@@ -114,16 +113,6 @@ class BaseGame(metaclass=ABCMeta):
     @staticmethod
     def is_running_in_web() -> bool:
         return kataen.runs_in_web()
-
-    def render_text(self, screen, text, size=12, pos=(0, 0), xanchor=0, color=(255, 255, 255), bg_color=None):
-        if self._info_font is None or self._info_font.get_height() != size:
-            self._info_font = pygame.font.Font(None, size)
-        lines = text.split("\n")
-        y = pos[1]
-        for a_line in lines:
-            surf = self._info_font.render(a_line, True, color, bg_color)
-            screen.blit(surf, (int(pos[0] - xanchor * surf.get_width()), y))
-            y += surf.get_height()
 
     """
     private methods
