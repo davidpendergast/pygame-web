@@ -15,19 +15,22 @@ class BaseGame(metaclass=ABCMeta):
     Base class for games, this is staged for the katasdk0.0.7 release
     """
 
-    FPS_TRACKING_DEFAULT_SS = 13
+    DEFAULT_FPS_N_FRAMES = 16
 
-    def __init__(self, track_fps=True):
+    def __init__(self, track_fps=False):
         if track_fps:
-            self._fps_n_frames = self.FPS_TRACKING_DEFAULT_SS
+            self.__track_fps = True
+            self.fps_n_frames = self.DEFAULT_FPS_N_FRAMES
+            self.fps_tracker = collections.deque()
         else:
-            self._fps_n_frames = 0
+            self.__track_fps = False
 
-        self._fps_tracker = collections.deque()
-        self._tick = 0
-
-        self._cached_info_text = None
+        self.tick = 0
         self._info_font = None
+
+    @property
+    def is_tracking_fps(self):
+        return self.__track_fps
 
     def start(self):
         """Starts the game loop. This method will not exit until the game has finished execution."""
@@ -35,18 +38,26 @@ class BaseGame(metaclass=ABCMeta):
         class _ProxyReceiver(EventReceiver):
             def __init__(self, ref_game):
                 super().__init__()
-                self._tnow_cache = None
+
                 self._game = ref_game
                 self._event_queue = []
                 self._last_update_time = time.time()
 
             def proc_event(self, ev, source):
                 if ev.type == EngineEvTypes.LOGICUPDATE:
-                    self._game._update_internal(self._event_queue, ev.curr_t, ev.curr_t-self._last_update_time)
-                    self._last_update_time = self._tnow_cache = ev.curr_t
+                    g = self._game
+                    if g.is_tracking_fps:
+                        g.fps_tracker.append(ev.curr_t)
+                        if len(g.fps_tracker) > g.fps_n_frames:
+                            g.fps_tracker.popleft()
+
+                    g.update(self._event_queue, ev.curr_t-self._last_update_time)
+                    g.tick += 1
+                    self._last_update_time = ev.curr_t
                     self._event_queue.clear()
-                if ev.type == EngineEvTypes.PAINT:
-                    self._game._render_internal(ev.screen, self._tnow_cache)
+
+                elif ev.type == EngineEvTypes.PAINT:
+                    self._game.render(ev.screen)
                 else:
                     self._event_queue.append(ev)
 
@@ -82,10 +93,10 @@ class BaseGame(metaclass=ABCMeta):
     utils
     """
     def get_fps(self) -> float:
-        if len(self._fps_tracker) <= 1:
-            return 0
+        if not self.__track_fps:
+            raise ValueError('BaseGame has been built with a track_fps=False argument')
         else:
-            q = self._fps_tracker
+            q = self.fps_tracker
             total_time_secs = q[-1] - q[0]
             n_frames = len(q)
             if total_time_secs <= 0:
@@ -98,7 +109,7 @@ class BaseGame(metaclass=ABCMeta):
         return kataen.get_screen().get_size()
 
     def get_tick(self) -> int:
-        return self._tick
+        return self.tick
 
     @staticmethod
     def is_running_in_web() -> bool:
@@ -127,14 +138,3 @@ class BaseGame(metaclass=ABCMeta):
             return kataen.SUPER_RETRO_MODE
         else:
             raise ValueError("Unrecognized mode: {}".format(mode_str))
-
-    def _update_internal(self, events, tnow, dt):
-        self.update(events, dt)
-        self._tick += 1
-
-    def _render_internal(self, screen, tnow):
-        if self._fps_n_frames > 0:
-            self._fps_tracker.append(tnow)
-            if len(self._fps_tracker) > self._fps_n_frames:
-                self._fps_tracker.popleft()
-        self.render(screen)

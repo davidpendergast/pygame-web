@@ -1,9 +1,7 @@
 import math
 import random
-
 import katagames_sdk.engine as kataen
-
-from BaseGame import BaseGame as Game
+from BaseGame import BaseGame
 from Vector2 import Vector2
 
 
@@ -449,10 +447,10 @@ def rect_contains(rect, pt):
     return rect[0] <= pt[0] < rect[0] + rect[2] and rect[1] <= pt[1] < rect[1] + rect[3]
 
 
-class RayCasterGame(Game):
+class RayCasterGame(BaseGame):
 
     def __init__(self):
-        super().__init__()
+        super().__init__(track_fps=True)
         self.state = None
         self.renderer = RayCastRenderer3D()
         self.show_controls = True
