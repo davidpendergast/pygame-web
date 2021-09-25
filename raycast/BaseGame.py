@@ -17,20 +17,12 @@ class BaseGame(metaclass=ABCMeta):
 
     DEFAULT_FPS_N_FRAMES = 16
 
-    def __init__(self, track_fps=False):
-        if track_fps:
-            self.__track_fps = True
-            self.fps_n_frames = self.DEFAULT_FPS_N_FRAMES
-            self.fps_tracker = collections.deque()
-        else:
-            self.__track_fps = False
-
+    def __init__(self, fps_tracking=False):
+        self.__track_fps = False
+        if fps_tracking:
+            self.toggle_fps_tracking()
         self.tick = 0
-
-    @property
-    def is_tracking_fps(self):
-        return self.__track_fps
-
+    
     def start(self):
         """Starts the game loop. This method will not exit until the game has finished execution."""
 
@@ -91,9 +83,22 @@ class BaseGame(metaclass=ABCMeta):
     """
     utils
     """
+    @property
+    def is_tracking_fps(self):
+        return self.__track_fps
+
+    def toggle_fps_tracking(self):
+        if not self.__track_fps:
+            self.__track_fps = True
+            self.fps_n_frames = self.DEFAULT_FPS_N_FRAMES
+            self.fps_tracker = collections.deque()
+        else:
+            self.fps_tracker = None
+            self.__track_fps = False
+    
     def get_fps(self) -> float:
         if not self.__track_fps:
-            raise ValueError('BaseGame has been built with a track_fps=False argument')
+            raise ValueError('Call to BaseGame.get_fps() while the FPS tracking is off!')
         else:
             q = self.fps_tracker
             total_time_secs = q[-1] - q[0]

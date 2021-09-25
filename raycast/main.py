@@ -450,12 +450,14 @@ def rect_contains(rect, pt):
 class RayCasterGame(BaseGame):
 
     def __init__(self):
-        super().__init__(track_fps=True)
+        super().__init__(True)  # fps tracking
+        
         self.state = None
         self.renderer = RayCastRenderer3D()
         self.show_controls = True
 
         self._info_font = None
+        self._runs_in_web_ctx = kataen.runs_in_web()
 
     def render_text(self, screen, text, size=12, pos=(0, 0), xanchor=0, color=(255, 255, 255), bg_color=None):
         if self._info_font is None or self._info_font.get_height() != size:
@@ -505,7 +507,13 @@ class RayCasterGame(BaseGame):
     def update(self, events, dt):
         if self.state is None:
             self.state = self._build_initial_state()
-
+        
+        if not self._runs_in_web_ctx:  # calling set_caption is not always useful
+            if self.get_tick() % 20 == 0:
+                dims = self.get_screen_size()
+                cap = "Raycaster (DIMS={}, FPS={:.1f})".format(dims, self.get_fps())
+                pygame.display.set_caption(cap)
+        
         pressed = pygame.key.get_pressed()
 
         for e in events:
